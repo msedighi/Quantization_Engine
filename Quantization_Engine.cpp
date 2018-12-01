@@ -104,6 +104,8 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 		//std::cout << Laplacian_New << endl;
 		//std::cout << endl;
 
+		MatrixXd Identity_Close = MatrixXd::Constant(num_points, num_points, 0);
+		bool SumTest_flag = false;
 		if (perturb_flag)
 			Perturb(Laplacian_New - Laplacian[Scale_Counter], num_points, num_scale_bins, Energy_Vector[Scale_Counter], Orthonormal_Transformation[Scale_Counter]);
 		else
@@ -113,13 +115,32 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 				Laplacian_Eigenstructure.compute(Laplacian_New);
 				Orthonormal_Transformation[Scale_Counter] = Laplacian_Eigenstructure.eigenvectors();
 
-				MatrixXd Identity_Close;
 				if (Scale_Counter > 0)
 				{
-					Identity_Close = Orthonormal_Transformation[Scale_Counter - 1].transpose() * Orthonormal_Transformation[Scale_Counter];
+					MatrixXd Id = (Orthonormal_Transformation[Scale_Counter - 1].transpose() * Orthonormal_Transformation[Scale_Counter]);
+					MatrixXd Id2 = Id.cwiseProduct(Id);
+					for (int i = 0; i < num_points; i++)
+						for (int j = 0; j < num_points; j++)
+							if (Id2(i, j) == Id2.row(i).maxCoeff())
+								Identity_Close(i, j) = Id(i, j) / abs(Id(i, j));
 
-					std::cout << " INEEEEEEEEEEEEEE " << endl;
-					std::cout << Identity_Close.array().round() << endl;
+					
+					SumTest_flag = (Identity_Close.cwiseAbs().sum() == num_points);
+					if (SumTest_flag)
+					{
+						Orthonormal_Transformation[Scale_Counter] = (Orthonormal_Transformation[Scale_Counter] * Identity_Close.transpose()).eval();
+					}
+					//else if (Scale_Counter > 2)
+					//{
+					//	std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << Scale_Counter << endl;
+					//	std::cout << (10 * Id).array().round()/10 << endl;
+					//	std::cout << endl;
+					//	std::cout << (10 * Id2).array().round() / 10 << endl;
+					//	std::cout << endl;
+					//	std::cout << Identity_Close << endl;
+					//	std::cout << endl;
+
+					//}
 				}
 			}
 			else
@@ -134,19 +155,16 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 			Commutator_Energy[Scale_Counter] = Commutator_Eigenstructure.eigenvalues().real();
 			Energy_Vector[Scale_Counter] = MutualInteraction_Eigenstructure.eigenvalues();
 
-			// TEMP!
-			std::cout << endl;
-			std::cout << " BAA " << endl;
-			for (int i_points = 0; i_points < num_points; i_points++)
+			if (SumTest_flag)
 			{
-				std::cout << Orthonormal_Transformation[Scale_Counter].col(i_points).transpose() << " ,  " << Laplacian_Energy[Scale_Counter](i_points) << endl;
+				Laplacian_Energy[Scale_Counter] = (Identity_Close.cwiseAbs() * Laplacian_Energy[Scale_Counter]).eval();
 			}
+			//for (int i_points = 0; i_points < num_points; i_points++)
+			//{
+			//	std::cout << Orthonormal_Transformation[Scale_Counter].col(i_points).transpose() << " ,  " << Laplacian_Energy[Scale_Counter](i_points) << endl;
+			//}
 
 		}
-
-		//std::cout << "eigenvalues: " << endl;
-		//std::cout << Laplacian_Energy[Scale_Counter] << endl;
-		//std::cout << endl;
 
 		Laplacian[Scale_Counter] = Laplacian_New;
 	}
