@@ -89,7 +89,7 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 
 		for (int i_p=0; i_p < num_points; i_p++)
 			for (int j_p = 0; j_p < num_points; j_p++) 
-				Correlation_Operator(i_p, j_p) = StepFunc_1((double)Scale_Counter / (double)(num_scale_bins + 2), Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
+				Correlation_Operator(i_p, j_p) = StepFunc_3((double)Scale_Counter / (double)(num_scale_bins + 2), Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
 		//Correlation_Operator = (Distances.Operator.array() <= Scale_Distance).cast<double>();
 		//Correlation_Operator[Scale_Counter] = (Distances.Operator.array() / Scale_Distance).cast<double>();
 
@@ -100,12 +100,14 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 		complex<double> I(0, 1);
 		Commutator = I * (Mass_Operator * Laplacian_New - Laplacian_New * Mass_Operator);
 
+		// Debug!
 		//std::cout << "Laplacian Matrix : " << endl;
 		//std::cout << Laplacian_New << endl;
 		//std::cout << endl;
 
 		MatrixXd Identity_Close = MatrixXd::Constant(num_points, num_points, 0);
-		bool SumTest_flag = false;
+		bool ColSumTest_flag = false;
+		bool RowSumTest_flag = false;
 		if (perturb_flag)
 			Perturb(Laplacian_New - Laplacian[Scale_Counter], num_points, num_scale_bins, Energy_Vector[Scale_Counter], Orthonormal_Transformation[Scale_Counter]);
 		else
@@ -124,23 +126,22 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 							if (Id2(i, j) == Id2.row(i).maxCoeff())
 								Identity_Close(i, j) = Id(i, j) / abs(Id(i, j));
 
-					
-					SumTest_flag = (Identity_Close.cwiseAbs().sum() == num_points);
-					if (SumTest_flag)
+					VectorXd col_test = Identity_Close.cwiseAbs().colwise().sum();
+					VectorXd row_test = Identity_Close.cwiseAbs().rowwise().sum();
+					ColSumTest_flag = (col_test.minCoeff() == 1) && (col_test.maxCoeff() == 1);
+					RowSumTest_flag = (row_test.minCoeff() == 1) && (row_test.maxCoeff() == 1);
+					if (ColSumTest_flag && RowSumTest_flag)
 					{
 						Orthonormal_Transformation[Scale_Counter] = (Orthonormal_Transformation[Scale_Counter] * Identity_Close.transpose()).eval();
 					}
-					//else if (Scale_Counter > 2)
-					//{
-					//	std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << Scale_Counter << endl;
-					//	std::cout << (10 * Id).array().round()/10 << endl;
-					//	std::cout << endl;
-					//	std::cout << (10 * Id2).array().round() / 10 << endl;
-					//	std::cout << endl;
-					//	std::cout << Identity_Close << endl;
-					//	std::cout << endl;
-
-					//}
+					// Debug!
+						//std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << Scale_Counter << endl;
+						//std::cout << (10 * Id).array().round()/10 << endl;
+						//std::cout << endl;
+						//std::cout << (10 * Id2).array().round() / 10 << endl;
+						//std::cout << endl;
+						//std::cout << Identity_Close << endl;
+						//std::cout << endl;
 				}
 			}
 			else
@@ -155,10 +156,12 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 			Commutator_Energy[Scale_Counter] = Commutator_Eigenstructure.eigenvalues().real();
 			Energy_Vector[Scale_Counter] = MutualInteraction_Eigenstructure.eigenvalues();
 
-			if (SumTest_flag)
+			if (ColSumTest_flag && RowSumTest_flag)
 			{
 				Laplacian_Energy[Scale_Counter] = (Identity_Close.cwiseAbs() * Laplacian_Energy[Scale_Counter]).eval();
 			}
+			// Debug!
+			//std::cout << endl;
 			//for (int i_points = 0; i_points < num_points; i_points++)
 			//{
 			//	std::cout << Orthonormal_Transformation[Scale_Counter].col(i_points).transpose() << " ,  " << Laplacian_Energy[Scale_Counter](i_points) << endl;
@@ -211,7 +214,7 @@ int main()
 
 	bool error_calculation = false;
 
-	const long Number_Points = 7;
+	const long Number_Points = 6;
 	const long Dimension = 2;
 
 	const long Number_Scale_Bins = Number_Points * Number_Points;
@@ -374,12 +377,9 @@ int main()
 			//std::cout << Q_Compute.Orthonormal_Transformation[median_scale_index].col(i_points).transpose() << " ,  " << Q_Compute.Laplacian_Energy[median_scale_index](i_points) << endl;
 		//}
 	}
-	else
-	{
-		std::cout << "Laplacian Energy of median scale at t=0 : " << endl;
-		std::cout << Q_Compute.Laplacian_Energy[median_scale_index] << endl;
-	}
 	std::cout << endl;
+	std::cout << "Laplacian Energy of median scale at t=0 : " << endl;
+	std::cout << Q_Compute.Laplacian_Energy[median_scale_index] << endl;
 	std::cout << endl;
 	std::cout << "Mass Vector of median scale at t=0 : " << endl;
 	std::cout << Q_Compute.Mass_Vector[median_scale_index] << endl;
@@ -468,14 +468,14 @@ int main()
 	std::cout << endl;
 	//std::cout << "Computation Time 2 : " << computation_time2 / 1e6 << endl;
 
-	std::cout << endl;
-	std::cout << "Hexagon Waves w/o Noise Energies : " << Hexagon_Waves.Energy_Vector << endl;
-	std::cout << endl;
-	std::cout << "Hexagon Waves w Noise Energies : " << Hexagon_Waves_noise.Energy_Vector << endl;
-	std::cout << endl;
-	std::cout << "Hexagon Waves at MidScale w/o Noise Energies : " << Hexagon_Waves0.Energy_Vector << endl;
-	std::cout << endl;
-	std::cout << "Hexagon Waves at MidScale w Noise Energies : " << Hexagon_Waves0_noise.Energy_Vector << endl;
+	//std::cout << endl;
+	//std::cout << "Hexagon Waves w/o Noise Energies : " << Hexagon_Waves.Energy_Vector << endl;
+	//std::cout << endl;
+	//std::cout << "Hexagon Waves w Noise Energies : " << Hexagon_Waves_noise.Energy_Vector << endl;
+	//std::cout << endl;
+	//std::cout << "Hexagon Waves at MidScale w/o Noise Energies : " << Hexagon_Waves0.Energy_Vector << endl;
+	//std::cout << endl;
+	//std::cout << "Hexagon Waves at MidScale w Noise Energies : " << Hexagon_Waves0_noise.Energy_Vector << endl;
 
 	return 0;
 }
