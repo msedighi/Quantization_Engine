@@ -31,6 +31,9 @@ public:
 
 	void Perturb(double** dH, int num_points, long num_scale_bins, double* energy_vector, double** orthonormal_transformation);
 	void Perturb(Eigen::MatrixXd dH, int num_points, long num_scale_bins, Eigen::VectorXd Energy_Vector_P, Eigen::MatrixXd Orthonormal_Transformation_P);
+	// Smoothing
+	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, int scale_counter, int num_points);
+	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXcd* vectors, int scale_counter, int num_points);
 	//
 
 	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, bool eigenvectors_flag = false, bool perturb_flag = false);
@@ -50,4 +53,5 @@ private:
 	Eigen::MatrixXd Mass_Operator;
 	Eigen::MatrixXd* Laplacian;
 
+	Eigen::MatrixXcd* Commutator_Orthonormal_Transformation;
 };
