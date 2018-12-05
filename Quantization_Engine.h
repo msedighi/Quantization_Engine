@@ -21,7 +21,10 @@ public:
 	Eigen::VectorXd* Commutator_Energy;
 	Eigen::VectorXd* Mass_Vector;
 	Eigen::VectorXd* Energy_Vector;
-	Eigen::MatrixXd* Orthonormal_Transformation;
+	Eigen::MatrixXd* Laplacian_Orthonormal_Transformation;
+	Eigen::MatrixXd* Energy_Orthonormal_Transformation;
+	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Real;
+	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Imag;
 
 	// Perturbation
 	int Peturb_Order;
