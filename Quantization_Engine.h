@@ -18,6 +18,9 @@ public:
 
 	Clusters * Hierarchical_Clusters;
 	Eigen::VectorXd* Laplacian_Energy;
+	Eigen::VectorXd* Laplacian_Energy_Derivative;
+	Eigen::VectorXd* Laplacian_Energy_Derivative_smoothed;
+
 	Eigen::VectorXd* Commutator_Energy;
 	Eigen::VectorXd* Mass_Vector;
 	Eigen::VectorXd* Energy_Vector;
@@ -25,6 +28,8 @@ public:
 	Eigen::MatrixXd* Energy_Orthonormal_Transformation;
 	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Real;
 	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Imag;
+
+	Multiplicity* Laplacian_Multiplicity;
 
 	// Perturbation
 	int Peturb_Order;
@@ -34,16 +39,18 @@ public:
 	// Smoothing
 	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, int scale_counter, int num_points);
 	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXcd* vectors, int scale_counter, int num_points);
+	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, Multiplicity* values_multiplicity, int num_points, int num_scale_bins);
 	//
 
 	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, bool eigenvectors_flag = false, bool perturb_flag = false);
-	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag = false,  bool perturb_flag = false);
+	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag = false,  bool perturb_flag = false, bool smooth_flag = false);
 
 	Compute(int num_points, long num_scale_bins, int perturb_order);
 	Compute(int num_points, long num_scale_bins);
 	~Compute();
 private:
 	long Number_Pairs;
+
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> Laplacian_Eigenstructure;
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> MutualInteraction_Eigenstructure;
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> Commutator_Eigenstructure;

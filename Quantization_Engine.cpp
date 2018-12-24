@@ -67,7 +67,7 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 	Compute::Run(positions, velocities, masses, num_points, dimension, dt, num_scale_bins, eigenvectors_flag, perturb_flag);
 }
 
-void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag)
+void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
 {	
 	Distance_Struct Distances = Distance_Matrix(Euclidean_Distance, positions, num_points, dimension);
 	Min_Distance = Distances.Vector[0].Distance;
@@ -77,19 +77,19 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 	Hierarchical_Clusters = new Clusters(Distances);
 	//
 
-	double Scale_Distance;
+	//double Scale_Distance;
 	MatrixXcd Commutator = MatrixXcd::Constant(num_points, num_points, 0);
 	// TEMP!!
 	Correlation_Operator = Eigen::MatrixXd::Constant(num_points, num_points, 0);
 	//
-	for (long Scale_Counter = 0; Scale_Counter < (num_scale_bins + 2); Scale_Counter++)
+	for (long Scale_Counter = 0; Scale_Counter < num_scale_bins; Scale_Counter++)
 	{
-		Scale_Distance = Scale_Counter * Max_Distance / num_scale_bins; 
+		//Scale_Distance = Scale_Counter * Max_Distance / num_scale_bins; 
 		//Scale_Distance = (Hierarchical_Clusters.Max_Vacuum_Scales + Hierarchical_Clusters.Min_Saturation_Scales) / 2;
 
 		for (int i_p=0; i_p < num_points; i_p++)
 			for (int j_p = 0; j_p < num_points; j_p++) 
-				Correlation_Operator(i_p, j_p) = StepFunc_2((double)Scale_Counter / (double)(num_scale_bins + 2), Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
+				Correlation_Operator(i_p, j_p) = StepFunc_4((double)Scale_Counter / (double)num_scale_bins, Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
 		//Correlation_Operator = (Distances.Operator.array() <= Scale_Distance).cast<double>();
 		//Correlation_Operator[Scale_Counter] = (Distances.Operator.array() / Scale_Distance).cast<double>();
 
@@ -119,16 +119,28 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 				Commutator_Energy[Scale_Counter] = Commutator_Eigenstructure.eigenvalues().real();
 				Energy_Vector[Scale_Counter] = MutualInteraction_Eigenstructure.eigenvalues();
 
+				Laplacian_Multiplicity[Scale_Counter] = Compute_Multiplicity(Laplacian_Energy[Scale_Counter], num_points, 0.04);
+				// Debug!
+				if (Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States > 0)
+				{
+					std::cout << "Laplacian Multiplicity @ " << Scale_Counter << " : " << endl;
+					std::cout << Laplacian_Energy[Scale_Counter] << endl;
+					std::cout << endl;
+					std::cout << "Num Degenerate States @ " << Scale_Counter << " : " << endl;
+					std::cout << Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States << endl;
+					std::cout << endl;
+					for (int i_m = 0; i_m < Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States; i_m++)
+					{
+						std::cout << "index : " << endl;
+						std::cout << Laplacian_Multiplicity[Scale_Counter].initial_index[i_m] << " to " << Laplacian_Multiplicity[Scale_Counter].final_index[i_m] << " : " << Laplacian_Multiplicity[Scale_Counter].degeneracy[i_m] << endl;
+						std::cout << endl;
+					}
+				}
+				//
+
 				Laplacian_Orthonormal_Transformation[Scale_Counter] = Laplacian_Eigenstructure.eigenvectors();
 				Energy_Orthonormal_Transformation[Scale_Counter] = MutualInteraction_Eigenstructure.eigenvectors();
 				Commutator_Orthonormal_Transformation[Scale_Counter] = Commutator_Eigenstructure.eigenvectors();
-
-				if (Scale_Counter > 0)
-				{
-					Compute::Smooth(Laplacian_Energy, Laplacian_Orthonormal_Transformation, Scale_Counter, num_points);
-					Compute::Smooth(Energy_Vector, Energy_Orthonormal_Transformation, Scale_Counter, num_points);
-					Compute::Smooth(Commutator_Energy, Commutator_Orthonormal_Transformation, Scale_Counter, num_points);
-				}
 
 				Commutator_Orthonormal_Transformation_Real[Scale_Counter] = Commutator_Orthonormal_Transformation[Scale_Counter].real();
 				Commutator_Orthonormal_Transformation_Imag[Scale_Counter] = Commutator_Orthonormal_Transformation[Scale_Counter].imag();
@@ -142,18 +154,271 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 				Laplacian_Energy[Scale_Counter] = Laplacian_Eigenstructure.eigenvalues().cwiseAbs();
 				Commutator_Energy[Scale_Counter] = Commutator_Eigenstructure.eigenvalues().real();
 				Energy_Vector[Scale_Counter] = MutualInteraction_Eigenstructure.eigenvalues();
+
+				Laplacian_Multiplicity[Scale_Counter] = Compute_Multiplicity(Laplacian_Energy[Scale_Counter], num_points, 0.04);
 			}
 		}
 
-		Laplacian[Scale_Counter] = Laplacian_New;
+
+ 		Laplacian[Scale_Counter] = Laplacian_New;
 	}
 
 	//double xx = RadialPower_Force::Force<-1>(10.0);
+
+	// Smoothing
+	if (smooth_flag)
+	{
+		Compute::Smooth(Laplacian_Energy, Laplacian_Orthonormal_Transformation, Laplacian_Multiplicity, num_points, num_scale_bins);
+		//Compute::Smooth(Energy_Vector, Energy_Orthonormal_Transformation, num_points, num_scale_bins);
+		//Compute::Smooth(Commutator_Energy, Commutator_Orthonormal_Transformation, num_points, num_scale_bins);
+	}
+
+	for (long Scale_Counter = 1; Scale_Counter < num_scale_bins; Scale_Counter++)
+	{
+		Laplacian_Energy_Derivative[Scale_Counter - 1] = Laplacian_Energy[Scale_Counter] - Laplacian_Energy[Scale_Counter - 1];
+		Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] = (Laplacian_Orthonormal_Transformation[Scale_Counter - 1].transpose().conjugate() * (Laplacian[Scale_Counter] - Laplacian[Scale_Counter - 1]) * Laplacian_Orthonormal_Transformation[Scale_Counter - 1]).diagonal();
+		// Debug!
+		//std::cout << "Laplacian Energy Derivative : " << endl;
+		//std::cout << Laplacian_Energy_Derivative[Scale_Counter - 1] << endl;
+		//std::cout << endl;
+		//std::cout << "Laplacian Energy Derivative Error : " << endl;
+		//std::cout << (Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] - Laplacian_Energy_Derivative[Scale_Counter - 1]).cwiseAbs() << endl;
+		//std::cout << endl;
+	}
 
 	// Particle Dynamics :
 	// Verlet Method	
 	Verlet(Gravitation::Force, positions, velocities, masses, dt, num_points, dimension);
 	//
+}
+
+void Compute::Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, Multiplicity* values_multiplicity, int num_points, int num_scale_bins)
+{
+	int start_index = num_scale_bins / 2;
+	int off_set = 0;
+	while (values_multiplicity[start_index + off_set].Num_Degenerate_States > 0)
+	{
+		off_set++;
+		if (start_index >= off_set)
+		{
+			if (values_multiplicity[start_index - off_set].Num_Degenerate_States == 0)
+			{
+				start_index = start_index - off_set;
+				break;
+			}
+		}
+
+		if (start_index + off_set >= num_scale_bins)
+			break;
+	}
+	if (start_index == num_scale_bins / 2)
+		start_index = start_index + off_set;
+
+	bool ColSumTest_flag = false;
+	bool RowSumTest_flag = false;
+
+	MatrixXd Identity_Close_Prod = MatrixXd::Identity(num_points, num_points);
+	for (int i_s = start_index; i_s < num_scale_bins; i_s++)
+	{
+		MatrixXd Identity_Close = MatrixXd::Constant(num_points, num_points, 0);
+
+		for (int i_d = 0; i_d < values_multiplicity[i_s].Num_Degenerate_States; i_d++)
+		{
+			for (int i = values_multiplicity[i_s].initial_index[i_d]; i <= values_multiplicity[i_s].final_index[i_d]; i++)
+			{
+				vectors[i_s].col(i) = vectors[i_s - 1].col(i);
+			}
+		}
+
+		if (i_s > start_index)
+		{
+			MatrixXd Id = (vectors[i_s - 1].transpose() * vectors[i_s]);
+			MatrixXd Id2 = Id.cwiseProduct(Id);
+
+			for (int i = 0; i < num_points; i++)
+				for (int j = 0; j < num_points; j++)
+					if (Id2(i, j) == Id2.row(i).maxCoeff())
+					{
+						Identity_Close(i, j) = Id(i, j) / abs(Id(i, j));
+					}
+				
+			//Debug!
+			std::cout << " INEEEEEEEEEEEEEE @ Scale_Counter = " << i_s - 1 << endl;
+			std::cout << (10 * Id).array().round() / 10 << endl;
+			std::cout << endl;
+			std::cout << (10 * Id2).array().round() / 10 << endl;
+			std::cout << endl;
+			std::cout << Identity_Close << endl;
+			std::cout << endl;
+			std::cout << Identity_Close_Prod << endl;
+			std::cout << endl;
+			std::cout << endl;
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s - 2].col(i_points).transpose() << " ,  " << values[i_s - 2](i_points) << endl;
+			}
+			std::cout << endl;
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s - 1].col(i_points).transpose() << " ,  " << values[i_s - 1](i_points) << endl;
+			}
+			std::cout << endl;
+			//
+
+
+			ArrayXd col_test = Identity_Close.cwiseAbs().colwise().sum().array();
+			ArrayXd row_test = Identity_Close.cwiseAbs().rowwise().sum().array();
+
+			ColSumTest_flag = (col_test.minCoeff() == 1) && (col_test.maxCoeff() == 1);
+			RowSumTest_flag = (row_test.minCoeff() == 1) && (row_test.maxCoeff() == 1);
+
+			if (!ColSumTest_flag || !RowSumTest_flag)
+			{
+				std::cout << " Error @ Scale_Counter = " << i_s << endl;
+				for (int i_points = 0; i_points < num_points; i_points++)
+				{
+					std::cout << vectors[i_s].col(i_points).transpose() << " ,  " << values[i_s](i_points) << endl;
+				}
+				std::cout << endl;
+			}
+
+			vectors[i_s - 1] = (vectors[i_s - 1] * Identity_Close_Prod.transpose()).eval();
+			values[i_s - 1] = (Identity_Close_Prod.cwiseAbs() * values[i_s - 1]).eval();
+
+			Identity_Close_Prod = (Identity_Close_Prod * Identity_Close).eval();
+
+			//
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s - 1].col(i_points).transpose() << " ,  " << values[i_s - 1](i_points) << endl;
+			}
+			std::cout << endl;
+			//
+
+			// TEST!!
+			MatrixXd Id_Test = (vectors[i_s - 2].transpose() * vectors[i_s - 1]);
+			MatrixXd Id2_Test = Id_Test.cwiseProduct(Id_Test);
+			MatrixXd Identity_Close_Test = MatrixXd::Constant(num_points, num_points, 0);
+			for (int i = 0; i < num_points; i++)
+				for (int j = 0; j < num_points; j++)
+					if (Id2_Test(i, j) == Id2_Test.row(i).maxCoeff())
+					{
+						Identity_Close_Test(i, j) = Id_Test(i, j) / abs(Id_Test(i, j));
+					}
+
+			if (!Identity_Close_Test.isIdentity() && (i_s > (start_index + 1)))
+			{
+				std::cout << Identity_Close_Test << endl;
+				std::cout << endl;
+			}
+			//
+
+		}
+		
+	}
+
+	Identity_Close_Prod = MatrixXd::Identity(num_points, num_points);
+	for (int i_s = start_index; i_s >= 0; i_s--)
+	{
+		MatrixXd Identity_Close = MatrixXd::Constant(num_points, num_points, 0);
+
+		for (int i_d = 0; i_d < values_multiplicity[i_s].Num_Degenerate_States; i_d++)
+		{
+			for (int i = values_multiplicity[i_s].initial_index[i_d]; i <= values_multiplicity[i_s].final_index[i_d]; i++)
+			{
+				vectors[i_s].col(i) = vectors[i_s + 1].col(i);
+			}
+		}
+
+		if (i_s < start_index)
+		{
+			MatrixXd Id = (vectors[i_s + 1].transpose() * vectors[i_s]);
+			MatrixXd Id2 = Id.cwiseProduct(Id);
+
+			for (int i = 0; i < num_points; i++)
+				for (int j = 0; j < num_points; j++)
+					if (Id2(i, j) == Id2.row(i).maxCoeff())
+					{
+						Identity_Close(i, j) = Id(i, j) / abs(Id(i, j));
+						// take a note of non deg states on the other side i.e. collect j's here!!
+					}
+
+
+			//Debug!
+			std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << i_s << endl;
+			std::cout << (10 * Id).array().round() / 10 << endl;
+			std::cout << endl;
+			std::cout << (10 * Id2).array().round() / 10 << endl;
+			std::cout << endl;
+			std::cout << Identity_Close << endl;
+			std::cout << endl;
+			std::cout << Identity_Close_Prod << endl;
+			std::cout << endl;
+			std::cout << endl;
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s + 2].col(i_points).transpose() << " ,  " << values[i_s + 2](i_points) << endl;
+			}
+			std::cout << endl;
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s + 1].col(i_points).transpose() << " ,  " << values[i_s + 1](i_points) << endl;
+			}
+			std::cout << endl;
+			//
+
+
+			ArrayXd col_test = Identity_Close.cwiseAbs().colwise().sum().array();
+			ArrayXd row_test = Identity_Close.cwiseAbs().rowwise().sum().array();
+
+			ColSumTest_flag = (col_test.minCoeff() == 1) && (col_test.maxCoeff() == 1);
+			RowSumTest_flag = (row_test.minCoeff() == 1) && (row_test.maxCoeff() == 1);
+
+			if (!ColSumTest_flag || !RowSumTest_flag)
+			{
+				std::cout << " Error @ Scale_Counter = " << i_s << endl;
+				for (int i_points = 0; i_points < num_points; i_points++)
+				{
+					std::cout << vectors[i_s].col(i_points).transpose() << " ,  " << values[i_s](i_points) << endl;
+				}
+				std::cout << endl;
+			}
+
+			vectors[i_s + 1] = (vectors[i_s + 1] * Identity_Close_Prod.transpose()).eval();
+			values[i_s + 1] = (Identity_Close_Prod.cwiseAbs() * values[i_s + 1]).eval();
+
+			Identity_Close_Prod = (Identity_Close_Prod * Identity_Close).eval();
+			//
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << vectors[i_s + 1].col(i_points).transpose() << " ,  " << values[i_s + 1](i_points) << endl;
+			}
+			std::cout << endl;
+			//
+
+			// TEST!!
+			MatrixXd Id_Test = (vectors[i_s + 2].transpose() * vectors[i_s + 1]);
+			MatrixXd Id2_Test = Id_Test.cwiseProduct(Id_Test);
+			MatrixXd Identity_Close_Test = MatrixXd::Constant(num_points, num_points, 0);
+			for (int i = 0; i < num_points; i++)
+				for (int j = 0; j < num_points; j++)
+					if (Id2_Test(i, j) == Id2_Test.row(i).maxCoeff())
+					{
+						Identity_Close_Test(i, j) = Id_Test(i, j) / abs(Id_Test(i, j));
+					}
+
+			if (!Identity_Close_Test.isIdentity())
+			{
+				std::cout << Identity_Close_Test << endl;
+				std::cout << endl;
+			}
+			//
+
+		}
+
+	}
+
+
 }
 
 void Compute::Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, int scale_counter, int num_points)
@@ -169,8 +434,11 @@ void Compute::Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, int scal
 			if (Id2(i, j) == Id2.row(i).maxCoeff())
 				Identity_Close(i, j) = Id(i, j) / abs(Id(i, j));
 
-	VectorXd col_test = Identity_Close.cwiseAbs().colwise().sum();
-	VectorXd row_test = Identity_Close.cwiseAbs().rowwise().sum();
+	ArrayXd col_test = Identity_Close.cwiseAbs().colwise().sum().array();
+	ArrayXd row_test = Identity_Close.cwiseAbs().rowwise().sum().array();
+
+	ArrayXb col_flag = (col_test == col_test.maxCoeff());
+	ArrayXb row_flag = (row_test == row_test.maxCoeff());
 	ColSumTest_flag = (col_test.minCoeff() == 1) && (col_test.maxCoeff() == 1);
 	RowSumTest_flag = (row_test.minCoeff() == 1) && (row_test.maxCoeff() == 1);
 
@@ -182,19 +450,56 @@ void Compute::Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, int scal
 	else
 	{
 		//Debug!
-		//std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << Scale_Counter << endl;
-		//std::cout << (10 * Id).array().round() / 10 << endl;
-		//std::cout << endl;
-		//std::cout << (10 * Id2).array().round() / 10 << endl;
-		//std::cout << endl;
-		//std::cout << Identity_Close << endl;
-		//std::cout << endl;
-		//std::cout << endl;
-		//for (int i_points = 0; i_points < num_points; i_points++)
-		//{
-		//	std::cout << Laplacian_Orthonormal_Transformation[Scale_Counter].col(i_points).transpose() << " ,  " << Laplacian_Energy[Scale_Counter](i_points) << endl;
-		//}
-		//std::cout << endl;
+		std::cout << " INEEEEEEEEEEEEEE @Scale_Counter = " << scale_counter << endl;
+		std::cout << (10 * Id).array().round() / 10 << endl;
+		std::cout << endl;
+		std::cout << (10 * Id2).array().round() / 10 << endl;
+		std::cout << endl;
+		std::cout << Identity_Close << endl;
+		std::cout << endl;
+		std::cout << endl;
+		for (int i_points = 0; i_points < num_points; i_points++)
+		{
+			std::cout << Laplacian_Orthonormal_Transformation[scale_counter].col(i_points).transpose() << " ,  " << Laplacian_Energy[scale_counter](i_points) << endl;
+		}
+		std::cout << endl;
+		// Fix
+		if ((row_test.minCoeff() == 1) && (col_test.minCoeff() == 1))
+		{
+			int col_flag_counter = 0;
+			for (int i = 0; i < num_points; i++)
+			{
+				if (col_flag(i))
+				{
+					col_flag_counter++;
+					int row_flag_counter = 0;
+					for (int j = 0; j < num_points; j++)
+					{
+						if (row_flag(j))
+						{
+							row_flag_counter++;
+
+							if (row_flag_counter == col_flag_counter)
+								Identity_Close(j, i) = 1;
+							else
+								Identity_Close(j, i) = 0;
+						}
+					}
+				}
+			}
+		}
+		else
+		{ 
+			for (int i_points = 0; i_points < num_points; i_points++)
+			{
+				std::cout << Laplacian_Orthonormal_Transformation[scale_counter - 1].col(i_points).transpose() << " ,  " << Laplacian_Energy[scale_counter - 1](i_points) << endl;
+			}
+			std::cout << endl;
+		}
+		std::cout << endl;
+		std::cout << Identity_Close << endl;
+		std::cout << endl;
+
 	}
 }
 
@@ -247,18 +552,23 @@ Compute::Compute(int num_points, long num_scale_bins, int perturb_order)
 	Peturb_Order = perturb_order;
 	Number_Pairs = num_points * (num_points - 1) / 2;
 
-	Laplacian_Energy = new VectorXd[num_scale_bins + 2];
-	Commutator_Energy = new VectorXd[num_scale_bins + 2];
-	Mass_Vector = new VectorXd[num_scale_bins + 2];
-	Energy_Vector = new VectorXd[num_scale_bins + 2];
-	Laplacian_Orthonormal_Transformation = new MatrixXd[num_scale_bins + 2];
-	Energy_Orthonormal_Transformation = new MatrixXd[num_scale_bins + 2];
-	Commutator_Orthonormal_Transformation = new MatrixXcd[num_scale_bins + 2];
-	Commutator_Orthonormal_Transformation_Real = new MatrixXd[num_scale_bins + 2];
-	Commutator_Orthonormal_Transformation_Imag = new MatrixXd[num_scale_bins + 2];
+	Laplacian_Energy = new VectorXd[num_scale_bins];
+	Laplacian_Energy_Derivative = new VectorXd[num_scale_bins - 1];
+	Laplacian_Energy_Derivative_smoothed = new VectorXd[num_scale_bins - 1];
+
+	Commutator_Energy = new VectorXd[num_scale_bins];
+	Mass_Vector = new VectorXd[num_scale_bins];
+	Energy_Vector = new VectorXd[num_scale_bins];
+	Laplacian_Orthonormal_Transformation = new MatrixXd[num_scale_bins];
+	Energy_Orthonormal_Transformation = new MatrixXd[num_scale_bins];
+	Commutator_Orthonormal_Transformation = new MatrixXcd[num_scale_bins];
+	Commutator_Orthonormal_Transformation_Real = new MatrixXd[num_scale_bins];
+	Commutator_Orthonormal_Transformation_Imag = new MatrixXd[num_scale_bins];
+
+	Laplacian_Multiplicity = new Multiplicity[num_scale_bins];
 
 	Vac = VectorXd::Constant(num_points, 1);
-	Laplacian = new MatrixXd[num_scale_bins + 2];
+	Laplacian = new MatrixXd[num_scale_bins];
 }
 
 Compute::Compute(int num_points, long num_scale_bins):Compute::Compute(num_points, num_scale_bins, 2) {}
@@ -267,6 +577,8 @@ Compute::~Compute()
 {
 	delete[] Laplacian;
 	delete[] Laplacian_Energy;
+	delete[] Laplacian_Energy_Derivative_smoothed;
+	delete[] Laplacian_Energy_Derivative;
 	delete[] Commutator_Energy;
 	delete[] Mass_Vector;
 	delete[] Energy_Vector;
@@ -275,6 +587,7 @@ Compute::~Compute()
 	delete[] Commutator_Orthonormal_Transformation;
 	delete[] Commutator_Orthonormal_Transformation_Real;
 	delete[] Commutator_Orthonormal_Transformation_Imag;
+	delete[] Laplacian_Multiplicity;
 	delete Hierarchical_Clusters;
 }
 
@@ -425,11 +738,13 @@ int main()
 
 	Compute Q_Compute = Compute(Number_Points, Number_Scale_Bins, 10);
 	bool eigenvectors_flag = true;
+	bool smooth_flag = true;
+	bool perturb_flag = false;
 
 	long long computation_time1 = 0;
 	auto start_time1 = high_resolution_clock::now();
 	
-	Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins,true);
+	Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
 	Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
 
 	auto elapsed_time1 = high_resolution_clock::now() - start_time1;
@@ -468,7 +783,7 @@ int main()
 		long long computation_time2 = 0;
 		auto start_time2 = high_resolution_clock::now();
 
-		Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, true);
+		Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
 		Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
 
 		auto elapsed_time2 = high_resolution_clock::now() - start_time2;
