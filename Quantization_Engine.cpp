@@ -79,17 +79,57 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 
 	//double Scale_Distance;
 	MatrixXcd Commutator = MatrixXcd::Constant(num_points, num_points, 0);
-	// TEMP!!
+	//
 	Correlation_Operator = Eigen::MatrixXd::Constant(num_points, num_points, 0);
 	//
+	ClassicalEnergy_Hamiltonian = Eigen::MatrixXd::Constant(num_points, num_points, 0);
+	double test;
+	for (int i_p = 0; i_p < num_points; i_p++)
+		for (int j_p = 0; j_p < num_points; j_p++)
+		{
+			if (i_p == j_p)
+				for (int i_d = 0; i_d < dimension; i_d++)
+				{
+					ClassicalEnergy_Hamiltonian(i_p, i_p) += masses[i_p] * velocities[i_p][i_d] * velocities[i_p][i_d];
+				}
+			else
+			{
+				ClassicalEnergy_Hamiltonian(i_p, j_p) = InverseRoot::Energy(Distances.Operator(i_p, j_p));
+			}
+		}
+
+	ClassicalHamiltonian_Eigenstructure.compute(ClassicalEnergy_Hamiltonian);
+	ClassicalHamiltonian_Energy = ClassicalHamiltonian_Eigenstructure.eigenvalues();
+	ClassicalHamiltonian_EigenStates = ClassicalHamiltonian_Eigenstructure.eigenvectors();
+	ClassicalEnergy = Vac.transpose() * ClassicalEnergy_Hamiltonian * Vac;
+
+
+	std::cout << "Hamiltonian: " << endl;
+	std::cout << ClassicalEnergy_Hamiltonian << endl;
+	std::cout << endl;
+	std::cout << "ClASSICAL ENERGY : " << endl;
+	std::cout << ClassicalEnergy << endl;
+	std::cout << endl;
+	std::cout << "ClASSICAL ENERGY Hamiltonian: " << endl;
+	std::cout << ClassicalHamiltonian_Energy << endl;
+	std::cout << endl;
+	std::cout << "ClASSICAL ENERGY STATES: " << endl;
+	std::cout << ClassicalHamiltonian_EigenStates << endl;
+	std::cout << endl;
+
+
+	//
+
 	for (long Scale_Counter = 0; Scale_Counter < num_scale_bins; Scale_Counter++)
 	{
 		//Scale_Distance = Scale_Counter * Max_Distance / num_scale_bins; 
 		//Scale_Distance = (Hierarchical_Clusters.Max_Vacuum_Scales + Hierarchical_Clusters.Min_Saturation_Scales) / 2;
 
 		for (int i_p=0; i_p < num_points; i_p++)
-			for (int j_p = 0; j_p < num_points; j_p++) 
-				Correlation_Operator(i_p, j_p) = StepFunc_4((double)Scale_Counter / (double)num_scale_bins, Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
+			for (int j_p = 0; j_p < num_points; j_p++)
+			{
+				Correlation_Operator(i_p, j_p) = StepFunc_3((double)Scale_Counter / (double)num_scale_bins, Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
+			}
 		//Correlation_Operator = (Distances.Operator.array() <= Scale_Distance).cast<double>();
 		//Correlation_Operator[Scale_Counter] = (Distances.Operator.array() / Scale_Distance).cast<double>();
 
@@ -188,7 +228,7 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 
 	// Particle Dynamics :
 	// Verlet Method	
-	Verlet(Gravitation::Force, positions, velocities, masses, dt, num_points, dimension);
+	Verlet(InverseRoot::Force, positions, velocities, masses, dt, num_points, dimension);
 	//
 }
 
@@ -600,7 +640,7 @@ int main()
 	const long Number_Points = 6;
 	const long Dimension = 2;
 
-	const long Number_Scale_Bins = Number_Points * Number_Points;
+	const long Number_Scale_Bins = Number_Points * Number_Points * 10;
 	const long Total_Time = 1;
 	double dt = 0.1;
 
@@ -738,14 +778,14 @@ int main()
 
 	Compute Q_Compute = Compute(Number_Points, Number_Scale_Bins, 10);
 	bool eigenvectors_flag = true;
-	bool smooth_flag = true;
+	bool smooth_flag = false;
 	bool perturb_flag = false;
 
 	long long computation_time1 = 0;
 	auto start_time1 = high_resolution_clock::now();
 	
 	Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
-	Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
+	//Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
 
 	auto elapsed_time1 = high_resolution_clock::now() - start_time1;
 	computation_time1 = duration_cast<microseconds>(elapsed_time1).count();
@@ -755,6 +795,37 @@ int main()
 
 	if (eigenvectors_flag)
 	{
+		MatrixXd midEnergy_EigenVectors = MatrixXd::Constant(Number_Points, Number_Points, 0);
+		midEnergy_EigenVectors.col(0) = Q_Compute.Laplacian_Orthonormal_Transformation[Number_Scale_Bins - 1].col(0);
+
+		double half_Energy = (double)Number_Points / 2;
+		for (int i_p = 1; i_p < Number_Points; i_p++)
+		{
+			double residual = INFINITY;
+			for (long i_s = 0; i_s < Number_Scale_Bins; i_s++)
+			{
+				if ((residual < abs(half_Energy - Q_Compute.Laplacian_Energy[i_s](i_p))) && (residual < .01))
+				{
+					midEnergy_EigenVectors.col(i_p) = Q_Compute.Laplacian_Orthonormal_Transformation[i_s - 1].col(i_p);
+
+					std::cout << "midEnergy EigenValue Test : " << endl;
+					std::cout << half_Energy << ", " << Q_Compute.Laplacian_Energy[i_s - 1](i_p) << ", " << (i_s - 1) << endl;
+					break;
+				}
+				else
+				{
+					residual = abs(half_Energy - Q_Compute.Laplacian_Energy[i_s](i_p));
+				}
+			}
+		}
+
+		std::cout << endl;
+		std::cout << "midEnergy Eigen Vectors : " << endl;
+		std::cout << midEnergy_EigenVectors << endl;
+		std::cout << "midEnergy Orthonormal Check : " << endl;
+		std::cout << midEnergy_EigenVectors.transpose() * midEnergy_EigenVectors << endl;
+
+
 		std::cout << "Eigenvectors of median scale at t=0 : " << endl;
 		std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index] << endl;
 		//std::cout << "Commutator Eigenvectors of median scale at t=0 : " << endl;
@@ -777,6 +848,7 @@ int main()
 	std::cout << "Commutator Energy of median scale at t=0 : " << endl;
 	std::cout << Q_Compute.Commutator_Energy[median_scale_index] << endl;
 	std::cout << endl;
+
 
 	if (false)
 	{

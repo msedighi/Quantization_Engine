@@ -16,6 +16,8 @@ public:
 	double Min_Distance;
 	double Max_Distance;
 
+	double ClassicalEnergy;
+
 	Clusters * Hierarchical_Clusters;
 	Eigen::VectorXd* Laplacian_Energy;
 	Eigen::VectorXd* Laplacian_Energy_Derivative;
@@ -24,10 +26,13 @@ public:
 	Eigen::VectorXd* Commutator_Energy;
 	Eigen::VectorXd* Mass_Vector;
 	Eigen::VectorXd* Energy_Vector;
+	Eigen::VectorXd ClassicalHamiltonian_Energy;
+
 	Eigen::MatrixXd* Laplacian_Orthonormal_Transformation;
 	Eigen::MatrixXd* Energy_Orthonormal_Transformation;
 	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Real;
 	Eigen::MatrixXd* Commutator_Orthonormal_Transformation_Imag;
+	Eigen::MatrixXd ClassicalHamiltonian_EigenStates;
 
 	Multiplicity* Laplacian_Multiplicity;
 
@@ -54,11 +59,15 @@ private:
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> Laplacian_Eigenstructure;
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> MutualInteraction_Eigenstructure;
 	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXcd> Commutator_Eigenstructure;
+	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> ClassicalHamiltonian_Eigenstructure;
 
 	Eigen::VectorXd Vac;
 	Eigen::MatrixXd Correlation_Operator;
 	Eigen::MatrixXd Mass_Operator;
+	Eigen::MatrixXd ClassicalEnergy_Hamiltonian;
 	Eigen::MatrixXd* Laplacian;
 
 	Eigen::MatrixXcd* Commutator_Orthonormal_Transformation;
+
+	//std::ofstream logFile;
 };
