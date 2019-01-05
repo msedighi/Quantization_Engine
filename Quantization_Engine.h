@@ -47,8 +47,8 @@ public:
 	void Smooth(Eigen::VectorXd* values, Eigen::MatrixXd* vectors, Multiplicity* values_multiplicity, int num_points, int num_scale_bins);
 	//
 
-	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, bool eigenvectors_flag = false, bool perturb_flag = false);
-	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag = false,  bool perturb_flag = false, bool smooth_flag = false);
+	void Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag = false, bool perturb_flag = false, bool smooth_flag = false);
+	void Run(Interaction* interaction, double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag = false, bool perturb_flag = false, bool smooth_flag = false);
 
 	Compute(int num_points, long num_scale_bins, int perturb_order);
 	Compute(int num_points, long num_scale_bins);

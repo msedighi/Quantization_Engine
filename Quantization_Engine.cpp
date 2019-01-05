@@ -3,12 +3,14 @@
 
 #include "stdafx.h"
 #include <iostream>
+#include <functional>
 
 #include "Quantization_Engine.h"
 
 using namespace std;
 using namespace Eigen;
 using namespace chrono;
+using namespace std::placeholders;
 
 void Compute::Perturb(Eigen::MatrixXd dH, int num_points, long num_scale_bins, Eigen::VectorXd energy_vector, Eigen::MatrixXd orthonormal_transformation)
 {
@@ -61,13 +63,13 @@ void Compute::Perturb(double** dH, int num_points, long num_scale_bins, double* 
 	// This is to apply the same algorithm but without the Eigen library
 }
 
-void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, bool eigenvectors_flag, bool perturb_flag)
-{
-	long num_scale_bins = num_points * num_points;
-	Compute::Run(positions, velocities, masses, num_points, dimension, dt, num_scale_bins, eigenvectors_flag, perturb_flag);
+void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
+{	
+	InverseRoot* invroot = new InverseRoot();
+	Compute::Run(invroot, positions, velocities, masses, num_points, dimension, dt, num_scale_bins, eigenvectors_flag, perturb_flag, smooth_flag);
 }
 
-void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
+void Compute::Run(Interaction* interaction, double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
 {	
 	Distance_Struct Distances = Distance_Matrix(Euclidean_Distance, positions, num_points, dimension);
 	Min_Distance = Distances.Vector[0].Distance;
@@ -94,7 +96,7 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 				}
 			else
 			{
-				ClassicalEnergy_Hamiltonian(i_p, j_p) = InverseRoot::Energy(Distances.Operator(i_p, j_p));
+				ClassicalEnergy_Hamiltonian(i_p, j_p) = interaction->Energy(Distances.Operator(i_p, j_p));
 			}
 		}
 
@@ -228,7 +230,7 @@ void Compute::Run(double** positions, double** velocities, double* masses, int n
 
 	// Particle Dynamics :
 	// Verlet Method	
-	Verlet(InverseRoot::Force, positions, velocities, masses, dt, num_points, dimension);
+	Verlet(interaction, positions, velocities, masses, dt, num_points, dimension);
 	//
 }
 
@@ -697,7 +699,7 @@ int main()
 
 	// Calculating Forces & Power
 	double** Force_Vector = new double*[Number_Points];
-	double*** Gravitational_Force_Operator = Force_Operator(Spring::Force, initial_Positions, Number_Points, Dimension, Force_Vector);
+	double*** Gravitational_Force_Operator = Force_Operator(new Gravitation(), initial_Positions, Number_Points, Dimension, Force_Vector);
 
 	double* Power_Vector = Vector_Product(initial_Velocities, Force_Vector, Number_Points, Dimension);
 	// Calculating Particle Dynamics
@@ -706,7 +708,7 @@ int main()
 	// Total Energy & Momentum Calculation
 	double* initial_Total_Momentum = Momentum(initial_Velocities, Masses, Number_Points, Dimension);
 
-	double initial_Total_Energy = Potential_Energy(Spring::Energy, initial_Positions, Number_Points, Dimension)
+	double initial_Total_Energy = Potential_Energy(new Gravitation(), initial_Positions, Number_Points, Dimension)
 		+ Kinetic_Energy(initial_Velocities, Masses, Number_Points, Dimension);
 	//
 
@@ -784,7 +786,7 @@ int main()
 	long long computation_time1 = 0;
 	auto start_time1 = high_resolution_clock::now();
 	
-	Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
+	Q_Compute.Run(new Spring(), Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
 	//Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
 
 	auto elapsed_time1 = high_resolution_clock::now() - start_time1;
@@ -855,8 +857,8 @@ int main()
 		long long computation_time2 = 0;
 		auto start_time2 = high_resolution_clock::now();
 
-		Q_Compute.Run(Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
-		Verlet(Spring::Force, Positions, Velocities, Masses, dt, Number_Points, Dimension);
+		Q_Compute.Run(new Gravitation(), Positions, Velocities, Masses, Number_Points, Dimension, dt, Number_Scale_Bins, eigenvectors_flag, perturb_flag, smooth_flag);
+		Verlet(new Spring(), Positions, Velocities, Masses, dt, Number_Points, Dimension);
 
 		auto elapsed_time2 = high_resolution_clock::now() - start_time2;
 		computation_time2 = duration_cast<microseconds>(elapsed_time2).count();
