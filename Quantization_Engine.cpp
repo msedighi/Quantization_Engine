@@ -3,14 +3,13 @@
 
 #include "stdafx.h"
 #include <iostream>
-#include <functional>
 
 #include "Quantization_Engine.h"
+#include "Particle_to_Wave.h"
 
 using namespace std;
 using namespace Eigen;
 using namespace chrono;
-using namespace std::placeholders;
 
 void Compute::Perturb(Eigen::MatrixXd dH, int num_points, long num_scale_bins, Eigen::VectorXd energy_vector, Eigen::MatrixXd orthonormal_transformation)
 {
@@ -65,8 +64,12 @@ void Compute::Perturb(double** dH, int num_points, long num_scale_bins, double* 
 
 void Compute::Run(double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
 {	
-	InverseRoot* invroot = new InverseRoot();
-	Compute::Run(invroot, positions, velocities, masses, num_points, dimension, dt, num_scale_bins, eigenvectors_flag, perturb_flag, smooth_flag);
+	InverseRoot* interaction = new InverseRoot();
+	//Spring* interaction = new Spring();
+	//Gravitation* interaction = new Gravitation();
+	//Lennard_Jones* interaction = new Lennard_Jones();
+	//Logarithmic* interaction = new Logarithmic();
+	Compute::Run(interaction, positions, velocities, masses, num_points, dimension, dt, num_scale_bins, eigenvectors_flag, perturb_flag, smooth_flag);
 }
 
 void Compute::Run(Interaction* interaction, double** positions, double** velocities, double* masses, int num_points, int dimension, double dt, long num_scale_bins, bool eigenvectors_flag, bool perturb_flag, bool smooth_flag)
@@ -79,49 +82,66 @@ void Compute::Run(Interaction* interaction, double** positions, double** velocit
 	Hierarchical_Clusters = new Clusters(Distances);
 	//
 
-	//double Scale_Distance;
-	MatrixXcd Commutator = MatrixXcd::Constant(num_points, num_points, 0);
-	//
-	Correlation_Operator = Eigen::MatrixXd::Constant(num_points, num_points, 0);
-	//
-	ClassicalEnergy_Hamiltonian = Eigen::MatrixXd::Constant(num_points, num_points, 0);
-	double test;
+	ClassicalKineticEnergy = 0;
+	KineticEnergy_Vector = Kinetic_Energy(velocities, masses, num_points, dimension);
+	ClassicalEnergy_Exchange = Energy_Exchange(interaction, positions, velocities, num_points, dimension);
 	for (int i_p = 0; i_p < num_points; i_p++)
+	{
+		ClassicalKineticEnergy += KineticEnergy_Vector[i_p] / 2.0;
+		ClassicalEnergy_Hamiltonian(i_p, i_p) = KineticEnergy_Vector[i_p];
+		// Off-diagonal
 		for (int j_p = 0; j_p < num_points; j_p++)
 		{
-			if (i_p == j_p)
-				for (int i_d = 0; i_d < dimension; i_d++)
-				{
-					ClassicalEnergy_Hamiltonian(i_p, i_p) += masses[i_p] * velocities[i_p][i_d] * velocities[i_p][i_d];
-				}
-			else
+			if (i_p != j_p)
 			{
 				ClassicalEnergy_Hamiltonian(i_p, j_p) = interaction->Energy(Distances.Operator(i_p, j_p));
+				PotentialEnergy_Operator(i_p, j_p) = ClassicalEnergy_Hamiltonian(i_p, j_p);
 			}
 		}
+	}
+	PotentialEnergy_Vector = PotentialEnergy_Operator * Vac;
+	PotentialEnergy_Laplacian = (MatrixXd)PotentialEnergy_Vector.asDiagonal() - PotentialEnergy_Operator;
+
+	//
+	ClassicalEnergy = ClassicalEnergy_Hamiltonian.sum() / 2.0;
+	ClassicalPotentialEnergy = PotentialEnergy_Operator.sum() / 2.0;
+	// Computing Classical Eigen-Structure
+	ClassicalLaplacian_Eigenstructure.compute(PotentialEnergy_Laplacian);
+	ClassicalLaplacian_Energy = ClassicalLaplacian_Eigenstructure.eigenvalues();
+	ClassicalLaplacian_EigenStates = ClassicalLaplacian_Eigenstructure.eigenvectors();
 
 	ClassicalHamiltonian_Eigenstructure.compute(ClassicalEnergy_Hamiltonian);
 	ClassicalHamiltonian_Energy = ClassicalHamiltonian_Eigenstructure.eigenvalues();
 	ClassicalHamiltonian_EigenStates = ClassicalHamiltonian_Eigenstructure.eigenvectors();
-	ClassicalEnergy = Vac.transpose() * ClassicalEnergy_Hamiltonian * Vac;
+	//
 
+	// Global Energy Exchange 
+	//GlobalEnergy_Exchange = CollectiveEnergy_Exchange(interaction, positions, velocities, num_points, dimension, (Hierarchical_Clusters->Orthogonal_Transformation).reverse().transpose());
+	GlobalEnergy_Exchange = CollectiveEnergy_Exchange(interaction, positions, velocities, num_points, dimension, ClassicalLaplacian_EigenStates);
 
-	std::cout << "Hamiltonian: " << endl;
-	std::cout << ClassicalEnergy_Hamiltonian << endl;
-	std::cout << endl;
-	std::cout << "ClASSICAL ENERGY : " << endl;
-	std::cout << ClassicalEnergy << endl;
-	std::cout << endl;
-	std::cout << "ClASSICAL ENERGY Hamiltonian: " << endl;
-	std::cout << ClassicalHamiltonian_Energy << endl;
-	std::cout << endl;
-	std::cout << "ClASSICAL ENERGY STATES: " << endl;
-	std::cout << ClassicalHamiltonian_EigenStates << endl;
-	std::cout << endl;
-
+	Tile_Waves = Tile_Interface->Run(GlobalEnergy_Exchange, num_points);
 
 	//
 
+	if (debug_flag)
+	{
+		std::cout << "Hamiltonian: " << endl;
+		std::cout << ClassicalEnergy_Hamiltonian << endl;
+		std::cout << endl;
+		std::cout << "ClASSICAL ENERGY : " << endl;
+		std::cout << ClassicalEnergy << endl;
+		std::cout << endl;
+		std::cout << "ClASSICAL ENERGY Hamiltonian: " << endl;
+		std::cout << ClassicalHamiltonian_Energy << endl;
+		std::cout << endl;
+		std::cout << "ClASSICAL ENERGY STATES: " << endl;
+		std::cout << ClassicalHamiltonian_EigenStates << endl;
+		std::cout << endl;
+	}
+
+	//
+
+	//#pragma loop(hint_parallel(6))
 	for (long Scale_Counter = 0; Scale_Counter < num_scale_bins; Scale_Counter++)
 	{
 		//Scale_Distance = Scale_Counter * Max_Distance / num_scale_bins; 
@@ -130,7 +150,7 @@ void Compute::Run(Interaction* interaction, double** positions, double** velocit
 		for (int i_p=0; i_p < num_points; i_p++)
 			for (int j_p = 0; j_p < num_points; j_p++)
 			{
-				Correlation_Operator(i_p, j_p) = StepFunc_3((double)Scale_Counter / (double)num_scale_bins, Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
+				Correlation_Operator(i_p, j_p) = StepFunc_0((double)Scale_Counter / (double)num_scale_bins, Distances.Operator(i_p, j_p) / (Max_Distance + Min_Distance));
 			}
 		//Correlation_Operator = (Distances.Operator.array() <= Scale_Distance).cast<double>();
 		//Correlation_Operator[Scale_Counter] = (Distances.Operator.array() / Scale_Distance).cast<double>();
@@ -138,14 +158,18 @@ void Compute::Run(Interaction* interaction, double** positions, double** velocit
 		Mass_Vector[Scale_Counter] = Correlation_Operator * Vac;
 		Mass_Operator = (Mass_Vector[Scale_Counter]).asDiagonal();
 
-		MatrixXd Laplacian_New = Mass_Operator - Correlation_Operator;
+		Laplacian_New = Mass_Operator - Correlation_Operator;
+
 		complex<double> I(0, 1);
 		Commutator = I * (Mass_Operator * Laplacian_New - Laplacian_New * Mass_Operator);
 
 		// Debug!
-		//std::cout << "Laplacian Matrix : " << endl;
-		//std::cout << Laplacian_New << endl;
-		//std::cout << endl;
+		if (debug_flag)
+		{
+			//std::cout << "Laplacian Matrix : " << endl;
+			//std::cout << Laplacian_New << endl;
+			//std::cout << endl;
+		}
 
 		if (perturb_flag)
 			Perturb(Laplacian_New - Laplacian[Scale_Counter], num_points, num_scale_bins, Energy_Vector[Scale_Counter], Laplacian_Orthonormal_Transformation[Scale_Counter]);
@@ -163,19 +187,22 @@ void Compute::Run(Interaction* interaction, double** positions, double** velocit
 
 				Laplacian_Multiplicity[Scale_Counter] = Compute_Multiplicity(Laplacian_Energy[Scale_Counter], num_points, 0.04);
 				// Debug!
-				if (Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States > 0)
+				if (debug_flag)
 				{
-					std::cout << "Laplacian Multiplicity @ " << Scale_Counter << " : " << endl;
-					std::cout << Laplacian_Energy[Scale_Counter] << endl;
-					std::cout << endl;
-					std::cout << "Num Degenerate States @ " << Scale_Counter << " : " << endl;
-					std::cout << Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States << endl;
-					std::cout << endl;
-					for (int i_m = 0; i_m < Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States; i_m++)
+					if (Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States > 0)
 					{
-						std::cout << "index : " << endl;
-						std::cout << Laplacian_Multiplicity[Scale_Counter].initial_index[i_m] << " to " << Laplacian_Multiplicity[Scale_Counter].final_index[i_m] << " : " << Laplacian_Multiplicity[Scale_Counter].degeneracy[i_m] << endl;
+						std::cout << "Laplacian Multiplicity @ " << Scale_Counter << " : " << endl;
+						std::cout << Laplacian_Energy[Scale_Counter] << endl;
 						std::cout << endl;
+						std::cout << "Num Degenerate States @ " << Scale_Counter << " : " << endl;
+						std::cout << Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States << endl;
+						std::cout << endl;
+						for (int i_m = 0; i_m < Laplacian_Multiplicity[Scale_Counter].Num_Degenerate_States; i_m++)
+						{
+							std::cout << "index : " << endl;
+							std::cout << Laplacian_Multiplicity[Scale_Counter].initial_index[i_m] << " to " << Laplacian_Multiplicity[Scale_Counter].final_index[i_m] << " : " << Laplacian_Multiplicity[Scale_Counter].degeneracy[i_m] << endl;
+							std::cout << endl;
+						}
 					}
 				}
 				//
@@ -213,20 +240,23 @@ void Compute::Run(Interaction* interaction, double** positions, double** velocit
 		Compute::Smooth(Laplacian_Energy, Laplacian_Orthonormal_Transformation, Laplacian_Multiplicity, num_points, num_scale_bins);
 		//Compute::Smooth(Energy_Vector, Energy_Orthonormal_Transformation, num_points, num_scale_bins);
 		//Compute::Smooth(Commutator_Energy, Commutator_Orthonormal_Transformation, num_points, num_scale_bins);
+
+		// Derivative Computation
+		for (long Scale_Counter = 1; Scale_Counter < num_scale_bins; Scale_Counter++)
+		{
+			Laplacian_Energy_Derivative[Scale_Counter - 1] = Laplacian_Energy[Scale_Counter] - Laplacian_Energy[Scale_Counter - 1];
+			Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] = (Laplacian_Orthonormal_Transformation[Scale_Counter - 1].transpose().conjugate() * (Laplacian[Scale_Counter] - Laplacian[Scale_Counter - 1]) * Laplacian_Orthonormal_Transformation[Scale_Counter - 1]).diagonal();
+			// Debug!
+			//std::cout << "Laplacian Energy Derivative : " << endl;
+			//std::cout << Laplacian_Energy_Derivative[Scale_Counter - 1] << endl;
+			//std::cout << endl;
+			//std::cout << "Laplacian Energy Derivative Error : " << endl;
+			//std::cout << (Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] - Laplacian_Energy_Derivative[Scale_Counter - 1]).cwiseAbs() << endl;
+			//std::cout << endl;
+		}
+
 	}
 
-	for (long Scale_Counter = 1; Scale_Counter < num_scale_bins; Scale_Counter++)
-	{
-		Laplacian_Energy_Derivative[Scale_Counter - 1] = Laplacian_Energy[Scale_Counter] - Laplacian_Energy[Scale_Counter - 1];
-		Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] = (Laplacian_Orthonormal_Transformation[Scale_Counter - 1].transpose().conjugate() * (Laplacian[Scale_Counter] - Laplacian[Scale_Counter - 1]) * Laplacian_Orthonormal_Transformation[Scale_Counter - 1]).diagonal();
-		// Debug!
-		//std::cout << "Laplacian Energy Derivative : " << endl;
-		//std::cout << Laplacian_Energy_Derivative[Scale_Counter - 1] << endl;
-		//std::cout << endl;
-		//std::cout << "Laplacian Energy Derivative Error : " << endl;
-		//std::cout << (Laplacian_Energy_Derivative_smoothed[Scale_Counter - 1] - Laplacian_Energy_Derivative[Scale_Counter - 1]).cwiseAbs() << endl;
-		//std::cout << endl;
-	}
 
 	// Particle Dynamics :
 	// Verlet Method	
@@ -589,7 +619,7 @@ void Compute::Smooth(Eigen::VectorXd* values, Eigen::MatrixXcd* vectors, int sca
 	}
 }
 
-Compute::Compute(int num_points, long num_scale_bins, int perturb_order)
+Compute::Compute(int num_points, long num_scale_bins, int num_tilelayers, int perturb_order)
 {
 	Peturb_Order = perturb_order;
 	Number_Pairs = num_points * (num_points - 1) / 2;
@@ -606,14 +636,28 @@ Compute::Compute(int num_points, long num_scale_bins, int perturb_order)
 	Commutator_Orthonormal_Transformation = new MatrixXcd[num_scale_bins];
 	Commutator_Orthonormal_Transformation_Real = new MatrixXd[num_scale_bins];
 	Commutator_Orthonormal_Transformation_Imag = new MatrixXd[num_scale_bins];
+	//
+	Correlation_Operator = MatrixXd::Constant(num_points, num_points, 0);
+	Commutator = MatrixXcd::Constant(num_points, num_points, 0);
+	//
+	ClassicalEnergy_Hamiltonian = MatrixXd::Constant(num_points, num_points, 0);
+	PotentialEnergy_Operator = MatrixXd::Constant(num_points, num_points, 0);
+
 
 	Laplacian_Multiplicity = new Multiplicity[num_scale_bins];
 
 	Vac = VectorXd::Constant(num_points, 1);
 	Laplacian = new MatrixXd[num_scale_bins];
+
+	Tile_Interface = new WaveParticle_Interface(num_tilelayers);
+	Num_TileHubs = Tile_Interface->Tile->Num_Points;
+	Tile_Dimension = Tile_Interface->Tile->dimension;
+	Tile_Positions = Tile_Interface->Tile->positions;
 }
 
-Compute::Compute(int num_points, long num_scale_bins):Compute::Compute(num_points, num_scale_bins, 2) {}
+Compute::Compute(int num_points, long num_scale_bins, int num_tilelayers) :Compute::Compute(num_points, num_scale_bins, num_tilelayers, 2) {}
+
+Compute::Compute(int num_points, long num_scale_bins):Compute::Compute(num_points, num_scale_bins, 4) {}
 
 Compute::~Compute()
 {
@@ -630,7 +674,14 @@ Compute::~Compute()
 	delete[] Commutator_Orthonormal_Transformation_Real;
 	delete[] Commutator_Orthonormal_Transformation_Imag;
 	delete[] Laplacian_Multiplicity;
+	delete[] KineticEnergy_Vector;
+	delete[] ClassicalEnergy_Exchange;
 	delete Hierarchical_Clusters;
+	delete Tile_Interface;
+
+	for (int i = 0; i < Num_TileHubs; i++)
+		delete[] Tile_Positions[i];
+	delete[] Tile_Positions;
 }
 
 int main()
@@ -639,7 +690,7 @@ int main()
 
 	bool error_calculation = false;
 
-	const long Number_Points = 6;
+	const long Number_Points = 8;
 	const long Dimension = 2;
 
 	const long Number_Scale_Bins = Number_Points * Number_Points * 10;
@@ -708,8 +759,9 @@ int main()
 	// Total Energy & Momentum Calculation
 	double* initial_Total_Momentum = Momentum(initial_Velocities, Masses, Number_Points, Dimension);
 
-	double initial_Total_Energy = Potential_Energy(new Gravitation(), initial_Positions, Number_Points, Dimension)
-		+ Kinetic_Energy(initial_Velocities, Masses, Number_Points, Dimension);
+	//double kinetic_energy;
+	//Kinetic_Energy(initial_Velocities, Masses, Number_Points, Dimension, kinetic_energy);
+	//double initial_Total_Energy = Potential_Energy(new Gravitation(), initial_Positions, Number_Points, Dimension) + kinetic_energy;
 	//
 
 
@@ -730,55 +782,60 @@ int main()
 	{
 		ScaleInv_Distance_Matrix(i_p, i_p) = 0;
 	}
-	//
-	std::cout << Scale_Operator << endl;
-	std::cout << endl;
-	std::cout << Hierarchical_Clusters.Orthogonal_Transformation << endl;
-	std::cout << endl;
-	std::cout << Scale_Operator_Dual << endl;
-	std::cout << endl;
-	std::cout << Hierarchical_Clusters.Orthogonal_Transformation_Dual << endl;
-	std::cout << endl;
-	std::cout << "ScaleInv Distance Matrix : " << endl;
-	std::cout << ScaleInv_Distance_Matrix << endl;
-	std::cout << endl;
-	for (int i_p = 0; i_p < Number_Points; i_p++)
+	if (false)
 	{
-		for (int j_p = 0; j_p < Number_Points; j_p++)
+		//
+		std::cout << Scale_Operator << endl;
+		std::cout << endl;
+		std::cout << Hierarchical_Clusters.Orthogonal_Transformation << endl;
+		std::cout << endl;
+		std::cout << Scale_Operator_Dual << endl;
+		std::cout << endl;
+		std::cout << Hierarchical_Clusters.Orthogonal_Transformation_Dual << endl;
+		std::cout << endl;
+		std::cout << "ScaleInv Distance Matrix : " << endl;
+		std::cout << ScaleInv_Distance_Matrix << endl;
+		std::cout << endl;
+		for (int i_p = 0; i_p < Number_Points; i_p++)
 		{
-			std::cout << Hierarchical_Clusters.Dendogram->Structure[i_p][j_p] << " ";
+			for (int j_p = 0; j_p < Number_Points; j_p++)
+			{
+				std::cout << Hierarchical_Clusters.Dendogram->Structure[i_p][j_p] << " ";
+			}
+			std::cout << ", " << Hierarchical_Clusters.Dendogram->Scale[i_p] << endl;
 		}
-		std::cout << ", " << Hierarchical_Clusters.Dendogram->Scale[i_p] << endl;
-	}
-	std::cout << endl;
-	for (int i_p = 0; i_p < Number_Points; i_p++)
-	{
-		for (int j_p = 0; j_p < Number_Points; j_p++)
+		std::cout << endl;
+		for (int i_p = 0; i_p < Number_Points; i_p++)
 		{
-			std::cout << Hierarchical_Clusters.Dendogram_Dual->Structure[i_p][j_p] << " ";
+			for (int j_p = 0; j_p < Number_Points; j_p++)
+			{
+				std::cout << Hierarchical_Clusters.Dendogram_Dual->Structure[i_p][j_p] << " ";
+			}
+			std::cout << ", " << Hierarchical_Clusters.Dendogram_Dual->Scale[i_p] << endl;
 		}
-		std::cout << ", " << Hierarchical_Clusters.Dendogram_Dual->Scale[i_p] << endl;
+		std::cout << endl;
 	}
-	std::cout << endl;
 
 	double** x = new double*[Number_Points];
 	int Calculated_Dimension = Embedding_Dimension(ScaleInv_Distance_Matrix, Number_Points, x);
-
-	//
-	std::cout << "X : " << std::endl;
-	for (int t1 = 0; t1 < Number_Points; t1++)
+	if (false)
 	{
-		for (int t2 = 0; t2 < (Number_Points - 1); t2++)
+		//
+		std::cout << "X : " << std::endl;
+		for (int t1 = 0; t1 < Number_Points; t1++)
 		{
-			std::cout << x[t1][t2] << "  ";
+			for (int t2 = 0; t2 < (Number_Points - 1); t2++)
+			{
+				std::cout << x[t1][t2] << "  ";
+			}
+			std::cout << std::endl;
 		}
 		std::cout << std::endl;
+		//
 	}
-	std::cout << std::endl;
-	//
 
 
-	Compute Q_Compute = Compute(Number_Points, Number_Scale_Bins, 10);
+	Compute Q_Compute = Compute(Number_Points, Number_Scale_Bins, 2);
 	bool eigenvectors_flag = true;
 	bool smooth_flag = false;
 	bool perturb_flag = false;
@@ -810,8 +867,11 @@ int main()
 				{
 					midEnergy_EigenVectors.col(i_p) = Q_Compute.Laplacian_Orthonormal_Transformation[i_s - 1].col(i_p);
 
-					std::cout << "midEnergy EigenValue Test : " << endl;
-					std::cout << half_Energy << ", " << Q_Compute.Laplacian_Energy[i_s - 1](i_p) << ", " << (i_s - 1) << endl;
+					if (false)
+					{
+						std::cout << "midEnergy EigenValue Test : " << endl;
+						std::cout << half_Energy << ", " << Q_Compute.Laplacian_Energy[i_s - 1](i_p) << ", " << (i_s - 1) << endl;
+					}
 					break;
 				}
 				else
@@ -821,36 +881,41 @@ int main()
 			}
 		}
 
-		std::cout << endl;
-		std::cout << "midEnergy Eigen Vectors : " << endl;
-		std::cout << midEnergy_EigenVectors << endl;
-		std::cout << "midEnergy Orthonormal Check : " << endl;
-		std::cout << midEnergy_EigenVectors.transpose() * midEnergy_EigenVectors << endl;
+		if (false)
+		{
+			std::cout << endl;
+			std::cout << "midEnergy Eigen Vectors : " << endl;
+			std::cout << midEnergy_EigenVectors << endl;
+			std::cout << "midEnergy Orthonormal Check : " << endl;
+			std::cout << midEnergy_EigenVectors.transpose() * midEnergy_EigenVectors << endl;
 
 
-		std::cout << "Eigenvectors of median scale at t=0 : " << endl;
-		std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index] << endl;
-		//std::cout << "Commutator Eigenvectors of median scale at t=0 : " << endl;
-		//std::cout << Q_Compute.Commutator_Orthonormal_Transformation[median_scale_index] << endl;
-		//for (int i_points = 0; i_points < Number_Points; i_points++)
-		//{
-			//std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose() << " ,  " << Q_Compute.Laplacian_Energy[median_scale_index](i_points) << endl;
-		//}
+			std::cout << "Eigenvectors of median scale at t=0 : " << endl;
+			std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index] << endl;
+			//std::cout << "Commutator Eigenvectors of median scale at t=0 : " << endl;
+			//std::cout << Q_Compute.Commutator_Orthonormal_Transformation[median_scale_index] << endl;
+			//for (int i_points = 0; i_points < Number_Points; i_points++)
+			//{
+				//std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose() << " ,  " << Q_Compute.Laplacian_Energy[median_scale_index](i_points) << endl;
+			//}
+		}
 	}
-	std::cout << endl;
-	std::cout << "Laplacian Energy of median scale at t=0 : " << endl;
-	std::cout << Q_Compute.Laplacian_Energy[median_scale_index] << endl;
-	std::cout << endl;
-	std::cout << "Mass Vector of median scale at t=0 : " << endl;
-	std::cout << Q_Compute.Mass_Vector[median_scale_index] << endl;
-	std::cout << endl;
-	std::cout << "Energy Vector of median scale at t=0 : " << endl;
-	std::cout << Q_Compute.Energy_Vector[median_scale_index] << endl;
-	std::cout << endl;
-	std::cout << "Commutator Energy of median scale at t=0 : " << endl;
-	std::cout << Q_Compute.Commutator_Energy[median_scale_index] << endl;
-	std::cout << endl;
-
+	if (false)
+	{
+		std::cout << endl;
+		std::cout << "Laplacian Energy of median scale at t=0 : " << endl;
+		std::cout << Q_Compute.Laplacian_Energy[median_scale_index] << endl;
+		std::cout << endl;
+		std::cout << "Mass Vector of median scale at t=0 : " << endl;
+		std::cout << Q_Compute.Mass_Vector[median_scale_index] << endl;
+		std::cout << endl;
+		std::cout << "Energy Vector of median scale at t=0 : " << endl;
+		std::cout << Q_Compute.Energy_Vector[median_scale_index] << endl;
+		std::cout << endl;
+		std::cout << "Commutator Energy of median scale at t=0 : " << endl;
+		std::cout << Q_Compute.Commutator_Energy[median_scale_index] << endl;
+		std::cout << endl;
+	}
 
 	if (false)
 	{
@@ -863,80 +928,90 @@ int main()
 		auto elapsed_time2 = high_resolution_clock::now() - start_time2;
 		computation_time2 = duration_cast<microseconds>(elapsed_time2).count();
 
-		std::cout << "Eigenvectors of median scale at t=1 : " << endl;
-		for (int i_points = 0; i_points < Number_Points; i_points++)
+		if (false)
 		{
-			std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose() << " ,  " << Q_Compute.Laplacian_Energy[median_scale_index](i_points) << endl;
+			std::cout << "Eigenvectors of median scale at t=1 : " << endl;
+			for (int i_points = 0; i_points < Number_Points; i_points++)
+			{
+				std::cout << Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose() << " ,  " << Q_Compute.Laplacian_Energy[median_scale_index](i_points) << endl;
+			}
+			std::cout << endl;
+
+			//for (int i_perturb = 0; i_perturb < Q_Compute.Peturb_Order; i_perturb++)
+			//{
+			//	std::cout << "Eigenvectors of median scale at t=1 (perturbed: " << i_perturb << " ): " << endl;
+			//	for (int i_points = 0; i_points < Number_Points; i_points++)
+			//	{
+			//		double mm = min((Q_Compute.Laplacian_Orthonormal_Transformation_P[i_perturb][median_scale_index].col(i_points).transpose() - Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose()).norm(), (Q_Compute.Laplacian_Orthonormal_Transformation_P[i_perturb][median_scale_index].col(i_points).transpose() + Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose()).norm());
+			//		std::cout << mm << " ,  " << abs(Q_Compute.Energy_Vector_P[i_perturb][median_scale_index](i_points)- Q_Compute.Energy_Vector[median_scale_index](i_points)) / Q_Compute.Energy_Vector[median_scale_index](i_points) << endl;
+			//	}
+			//	std::cout << endl;
+			//}
 		}
-		std::cout << endl;
-
-		//for (int i_perturb = 0; i_perturb < Q_Compute.Peturb_Order; i_perturb++)
-		//{
-		//	std::cout << "Eigenvectors of median scale at t=1 (perturbed: " << i_perturb << " ): " << endl;
-		//	for (int i_points = 0; i_points < Number_Points; i_points++)
-		//	{
-		//		double mm = min((Q_Compute.Laplacian_Orthonormal_Transformation_P[i_perturb][median_scale_index].col(i_points).transpose() - Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose()).norm(), (Q_Compute.Laplacian_Orthonormal_Transformation_P[i_perturb][median_scale_index].col(i_points).transpose() + Q_Compute.Laplacian_Orthonormal_Transformation[median_scale_index].col(i_points).transpose()).norm());
-		//		std::cout << mm << " ,  " << abs(Q_Compute.Energy_Vector_P[i_perturb][median_scale_index](i_points)- Q_Compute.Energy_Vector[median_scale_index](i_points)) / Q_Compute.Energy_Vector[median_scale_index](i_points) << endl;
-		//	}
-		//	std::cout << endl;
-		//}
-
 	}
 
 	// Hexagonal Dome Wave States 
+	double noise = 0.005;
 	double Scale_Distance = 1.1;
-	Wave_State Hexagon_Waves = HexagonX(4, Scale_Distance, false);
-	Wave_State Hexagon_Waves_noise = HexagonX(4, Scale_Distance, true);
-	Wave_State Hexagon_Waves0 = HexagonX(4, false);
-	Wave_State Hexagon_Waves0_noise = HexagonX(4, true);
+	TriangleTile Tile = TriangleTile(4, noise, false);
+	TriangleTile Tile_Noise = TriangleTile(4, noise, true);
+
+	Wave_State Hexagon_Waves = Tile.Hexagon_Wave(Scale_Distance);
+	Wave_State Hexagon_Waves_noise = Tile_Noise.Hexagon_Wave(Scale_Distance);
+	Wave_State Hexagon_Waves0 = Tile.Hexagon_Wave();
+	Wave_State Hexagon_Waves0_noise = Tile_Noise.Hexagon_Wave();
 	//
 
-	std::cout << "Min Scale : " << endl;
-	for (int t = 0; t < Total_Time; t++)
+
+	if (false)
 	{
-		std::cout << Q_Compute.Min_Distance << "  ";
+		std::cout << "Min Scale : " << endl;
+		for (int t = 0; t < Total_Time; t++)
+		{
+			std::cout << Q_Compute.Min_Distance << "  ";
+		}
+		std::cout << endl;
+
+		std::cout << "Min NonVacuum Scale : " << endl;
+		for (int t = 0; t < Total_Time; t++)
+		{
+			std::cout << Q_Compute.Hierarchical_Clusters->Max_Vacuum_Scale << "  ";
+		}
+		std::cout << endl;
+
+		std::cout << "Max NonVacuum Scale : " << endl;
+		for (int t = 0; t < Total_Time; t++)
+		{
+			std::cout << Q_Compute.Hierarchical_Clusters->Min_Saturation_Scale << "  ";
+		}
+		std::cout << endl;
+
+		std::cout << "Max Scale : " << endl;
+		for (int t = 0; t < Total_Time; t++)
+		{
+			std::cout << Q_Compute.Max_Distance << "  ";
+		}
+		std::cout << endl;
+
+		std::cout << endl;
+		std::cout << "Calculated Dimension : " << Calculated_Dimension << endl;
+		std::cout << endl;
+
+		std::cout << endl;
+		std::cout << endl;
+		std::cout << "Computation Time 1 : " << computation_time1 / 1e6 << endl;
+		std::cout << endl;
+		//std::cout << "Computation Time 2 : " << computation_time2 / 1e6 << endl;
 	}
-	std::cout << endl;
-	
-	std::cout << "Min NonVacuum Scale : " << endl;
-	for (int t = 0; t < Total_Time; t++)
-	{
-		std::cout << Q_Compute.Hierarchical_Clusters->Max_Vacuum_Scale << "  ";
-	}
-	std::cout << endl;
-
-	std::cout << "Max NonVacuum Scale : " << endl;
-	for (int t = 0; t < Total_Time; t++)
-	{
-		std::cout << Q_Compute.Hierarchical_Clusters->Min_Saturation_Scale << "  ";
-	}
-	std::cout << endl;
-
-	std::cout << "Max Scale : " << endl;
-	for (int t = 0; t < Total_Time; t++)
-	{
-		std::cout << Q_Compute.Max_Distance << "  ";
-	}
-	std::cout << endl;
 
 	std::cout << endl;
-	std::cout << "Calculated Dimension : " << Calculated_Dimension << endl;
+	std::cout << "Hexagon Waves w/o Noise Energies : " << Hexagon_Waves.Energy_Vector << endl;
 	std::cout << endl;
-
+	std::cout << "Hexagon Waves w Noise Energies : " << Hexagon_Waves_noise.Energy_Vector << endl;
 	std::cout << endl;
+	std::cout << "Hexagon Waves at MidScale w/o Noise Energies : " << Hexagon_Waves0.Energy_Vector << endl;
 	std::cout << endl;
-	std::cout << "Computation Time 1 : " << computation_time1/1e6 << endl;
-	std::cout << endl;
-	//std::cout << "Computation Time 2 : " << computation_time2 / 1e6 << endl;
-
-	//std::cout << endl;
-	//std::cout << "Hexagon Waves w/o Noise Energies : " << Hexagon_Waves.Energy_Vector << endl;
-	//std::cout << endl;
-	//std::cout << "Hexagon Waves w Noise Energies : " << Hexagon_Waves_noise.Energy_Vector << endl;
-	//std::cout << endl;
-	//std::cout << "Hexagon Waves at MidScale w/o Noise Energies : " << Hexagon_Waves0.Energy_Vector << endl;
-	//std::cout << endl;
-	//std::cout << "Hexagon Waves at MidScale w Noise Energies : " << Hexagon_Waves0_noise.Energy_Vector << endl;
+	std::cout << "Hexagon Waves at MidScale w Noise Energies : " << Hexagon_Waves0_noise.Energy_Vector << endl;
 
 	return 0;
 }
